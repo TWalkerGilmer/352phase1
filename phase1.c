@@ -46,6 +46,7 @@ void phase1_init(){
     processTable_size++;
 }
 
+
 void startprocesses(){
     dispatcher();
 }
