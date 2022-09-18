@@ -28,6 +28,7 @@ void phase1_init(){
     processTable[1]= init;
 }
 
+
 void startprocesses(){
 }
 
