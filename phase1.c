@@ -30,13 +30,47 @@ PCB* current;
 ListNode * priorityArray[8];
 
 // todo: make functions to enable/disable interrupts
-void init(){
 
+
+
+/*
+ * According to the spec, every function in Phase1 needs to disable interrupts at start,
+ * and "Restore" interrupts before returning,
+ * Additionally, Phase1 is only supposed to run in kernel mode, so each function
+ * has to check if kernel mode is enabled, otherwise return an error immediately.
+ * These checks can both be done by accessing the PSR, with: 
+ * unsigned int USLOSS_PsrGet();   and 
+ * void USLOSS_PsrSet(unsigned int);
+ */
+
+void disableInterrupts() {
+    int prevPSR = USLOSS_PsrGet();
+    // USLOSS_PsrSet(???);
+}
+
+void restoreInterrupts() {
+    
+}
+
+
+void phase1_init() {
+    /*This will be called exactly once, when the simulation starts up. Initialize
+your data structures, including setting up the process table entry for the
+starting process, init.
+Although you will create a process table entry for init, you must not run
+it (yet).*/
+}
+
+void init() {
+    dispatcher();
 }
 
 void sentinel(){
 }
 
+/*
+ * 
+ */
 void phase1_init(){
     PCB* init= malloc(sizeof(PCB));
     // add the main function pointer
@@ -51,7 +85,7 @@ void phase1_init(){
 }
 
 
-void startprocesses(){
+void startProcesses(){
     dispatcher();
 }
 
@@ -81,7 +115,6 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
     dispatcher();
 }
 
-
 int join(int *status){
     if (current->firstChild == NULL){
         return -2;
@@ -89,7 +122,7 @@ int join(int *status){
     
 }
 
-void dispatcher () {
+void dispatcher() {
     // TODO: block interrupts?
 
     // this function builds a new priority array each time it is called
@@ -99,6 +132,7 @@ void dispatcher () {
 
     if (nextProcess != current) {
         // TODO: Context Switch
+        USLOSS_ContextSwitch(USLOSS_Context *old_context, USLOSS_Context *new_context);
         // TODO: What about time slicing?
     }
 
@@ -113,12 +147,10 @@ void dispatcher () {
  * considering each process's priority value
  * NOTE: The first slot of the array (#0) is not used.
  */
-void dispatchHelper_buildArray() { // TODO: should this return a double pointer?
-    // NOTE: This runs in O(n^2) and could be updated to run in O(n)
-
+void dispatchHelper_buildArray() {
+    // NOTE: This runs in O(n^2) and could be updated to run in O(n), but n<50 so whatever
     // clear the priorityArray
     ListNode * priorityArray[8];
-
     // iterate through the Process Table and add each PCB* to priorityArray
     for (int i = 0; i < MAXPROC; i++) {
         if (processTable[i] == NULL) {
@@ -164,6 +196,7 @@ void quit(int status){
     // if parent is blocked, wake them
 
     // tell dispatcher that there is no currently running process
+    dispatcher();
 }
 
 int zap(int pid){
