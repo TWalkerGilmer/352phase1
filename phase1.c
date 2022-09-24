@@ -90,61 +90,73 @@ int join(int *status){
 }
 
 void dispatcher () {
-    // uses our Priority Array - an array of size 7 that holds linked lists of PCBs
-    // this function builds a new priority array each time it is called
+    // TODO: block interrupts?
 
-    *priorityArray = dispatchHelper_buildArray();
+    // this function builds a new priority array each time it is called
+    dispatchHelper_buildArray();
     // search for first runnable process according to priority
     PCB * nextProcess = dispatchHelper_findNextProcess();
 
+    if (nextProcess != current) {
+        // TODO: Context Switch
+        // TODO: What about time slicing?
+    }
 
+    // print Process Table info for debugging (why?)
+    dumpProcesses();
 
-
-    // if this process is currently running: keep it running (?)
-    // else: switch
-
-    dumpProcesses(); // print Process Table info for debugging
-
-    // TODO: switch if there is no current process
-    // check if current process should keep running or switch
-    // perform switch if necessary
-        // search for any runnable process
-        // switch to it by contextswitch
-
+    // TODO: "Restore" interrupts
 }
 
 /* 
  * Builds the priorityArray based on the current Process Table,
  * considering each process's priority value
+ * NOTE: The first slot of the array (#0) is not used.
  */
-ListNode * dispatchHelper_buildArray() { // TODO should this return a double pointer?
-    PCB * lastNodeP1 = 0;
-    PCB * lastNodeP2 = 0;
-    PCB * lastNodeP3 = 0;
-    PCB * lastNodeP4 = 0;
-    PCB * lastNodeP5 = 0;
+void dispatchHelper_buildArray() { // TODO: should this return a double pointer?
+    // NOTE: This runs in O(n^2) and could be updated to run in O(n)
 
-    // iterate through the Process Table
+    // clear the priorityArray
+    ListNode * priorityArray[8];
+
+    // iterate through the Process Table and add each PCB* to priorityArray
     for (int i = 0; i < MAXPROC; i++) {
-
+        if (processTable[i] == NULL) {
+            continue;
+        }
+        // make a new node to hold the PCB* from processTable
+        ListNode * newNode = malloc(sizeof(ListNode));
+        // determine where to put this PCB* based on its own priority
+        int priorityNum = processTable[i]->priority;
+        ListNode * tempNode = priorityArray[priorityNum];
+        if (tempNode == NULL) {
+            priorityArray[priorityNum] = newNode;
+        } else {
+            while (tempNode->next != NULL) {
+                tempNode = tempNode->next;
+            }
+            tempNode->next = newNode;
+        }
+        newNode->node = processTable[i];
+        newNode->next = NULL;
     }
-        // link each to the end of its place in the array
     return 0;
 }
 
 /*
  * Uses the Priority Array to determine the next process to call
+ * NOTE: The first slot of the array (#0) is not used.
  */
 PCB * dispatchHelper_findNextProcess() {
-    for (int priority = 1; priority <= 5; priority++) {
+    for (int priority = 1; priority <= 7; priority++) {
         ListNode * head = priorityArray[priority];
-        while (head != 0) {
-            // Q: how many statuses do we have?
-            // TODO: if a process is runnable (e.g. not blocked), return its PCB
+        while (head != NULL) {
+            if (head->node->status == 0) {
+                return head->node;
+            }
             head = head->next;
         }
     }
-    // TODO: for priority 6 and 7, return init or sentinel?
 }
 
 void quit(int status){
