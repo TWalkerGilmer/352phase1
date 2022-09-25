@@ -2,20 +2,22 @@
 #include <string.h>
 #include "phase1.h"
 
-
 typedef struct PCB{  // this needs contexts
     char *name;
     int pid;
-    // 0 for runnable, greater for blocked
+    // 0 for runnable, >10 for blocked
     int status;
     int priority;
     struct PCB* firstChild;
     struct PCB* parent;
+    struct PCB* nextChild;
     int startTime;
     // might be necessary
     int totalTime;
     // 1== is zapped
     int zapped;
+    // This is set when the process calls quit() to terminate itself:
+    int exitStatus;
     USLOSS_Context context;
 } PCB;
 
@@ -53,6 +55,8 @@ PCB* getProcess(int); // TODO: unmade
 void disableInterrupts() {
     // int prevPSR = USLOSS_PsrGet();
     // USLOSS_PsrSet(???);
+
+
 }
 
 void restoreInterrupts() {
@@ -132,21 +136,40 @@ int join(int *status){
     // TEMP
 
     // search list of children starting at current->firstChild
+    PCB* child = current->firstChild;
+    while (child != NULL) {
+        if (child->status == 2) { // if child is dead (status 2 equals dead)
+            // TODO: AND if child has not been joined before ???
+            break;
+        }
+        child = child->nextChild;
+    }
     // if all children are blocked:
-        // block current process:
-            // change current->status to blocked (this would automatically be resolved upon termination of a child)
-        // call dispatcher();
+    if (child == NULL) {
+        // block current process
+        blockMe(11);
         // search again, find the child
-        // set parameter *status to exit status of the child
-        // return found child's PID value
-    // else
-        // find the dead child
-        // set parameter *status to exit status of the child
-        // return found child's PID value
+        PCB* child = current->firstChild;
+        while (child != NULL) {
+            if (child->status == 2) { // if child is dead (status 2 equals dead)
+                // TODO: AND if child has not been joined before ???
+                break;
+            }
+            child = child->nextChild;
+        }
+        if (child == NULL) {
+            USLOSS_Console("ERROR: join() fail");
+        }
+    }
+    // you have found the dead child
+    // set parameter *status to exit status of the child
+    // status = &child->returnValue;
+    // return found child's PID value
 }
 
 void dispatcher() {
-    // TODO: block interrupts?
+    // TODO: block interrupts
+    // TODO: look for a process with STATUS == 0
 
     // this function builds a new priority array each time it is called
     dispatchHelper_buildArray();
