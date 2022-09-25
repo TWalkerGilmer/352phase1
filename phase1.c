@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include "phase1.h"
 
 typedef struct PCB{  // this needs contexts
@@ -20,6 +21,9 @@ typedef struct PCB{  // this needs contexts
     int exitStatus;
     int isDead;
     USLOSS_Context *context;
+    // 0 for not dead (default value), or 1 if it has died
+    int isDead;
+    USLOSS_Context * context;
 } PCB;
 
 typedef struct ListNode{
@@ -56,7 +60,6 @@ USLOSS_IntVec[USLOSS_CLOCK_INT]= &clockHandler;
  * unsigned int USLOSS_PsrGet();   and 
  * void USLOSS_PsrSet(unsigned int);
  */
-
 
 /*
  * Makes a new PCB with default values
@@ -182,10 +185,16 @@ void startProcesses(){
     dispatcher();
 }
 
+PCB * getProcess(int num) {
+    // TODO : this is a placeholder
+    return 0;
+}
+
 int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int priority){
     if (stackSize<USLOSS_MIN_STACK){
         return -2;
     }
+
     if (processTable_size== MAXPROC || priority<1 || (priority>5 && strcmp(name, "sentinel")!=0) || startFunc==NULL || name==NULL || strlen(name)>MAXNAME){
         return -1;
     }
@@ -215,69 +224,100 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
     return 0;
 }
 
+/*
+ * Called by a parent,
+ * Blocks the parent until one of its children dies.
+ * Removes the child from the processTable and from its family tree.
+ * Returns the dead child's PID.
+ */
 int join(int *status){
     if (current->firstChild == NULL) {
         return -2;
     }
+
     if (checkKernelMode()==1){
         USLOSS_Console("Error: Not in kernel mode.")
         USLOSS_Halt(1);
     }
-    // TEMP
-    return 0;
-    // TEMP
 
     // search list of children starting at current->firstChild
     PCB* child = current->firstChild;
     while (child != NULL) {
-        if (child->status == 2) { // if child is dead (status 2 equals dead)
-            // TODO: AND if child has not been joined before ???
+        if (child->isDead) {
+
             break;
         }
         child = child->nextChild;
     }
-    // if all children are blocked:
+
+    // if all children are still alive:
     if (child == NULL) {
         // block current process
-        blockMe(11);
+        blockMe(11); // blockMe calls the dispatcher, 11 is a generic status for blocked
         // search again, find the child
         PCB* child = current->firstChild;
         while (child != NULL) {
-            if (child->status == 2) { // if child is dead (status 2 equals dead)
-                // TODO: AND if child has not been joined before ???
+            if (child->isDead) {
                 break;
             }
             child = child->nextChild;
         }
         if (child == NULL) {
-            USLOSS_Console("ERROR: join() fail");
+            // This should never happen
+            USLOSS_Console("ERROR: join() fail, no dead child found after blocking parent");
+            assert(0);
         }
     }
     // you have found the dead child
     // set parameter *status to exit status of the child
-    // status = &child->returnValue;
-    // return found child's PID value
+    status = &(child->exitStatus);
+    int returnValue = child->pid;
+    // remove child from the processTable
+    for (int i = 0; i < MAXPROC; i++) {
+        if (processTable[i] == child) {
+            processTable[i] = NULL;
+            break;
+        }
+    }
+    // remove child from list of children
+    if (current->firstChild->isDead) {
+        current->firstChild = current->firstChild->nextChild;
+    } else {
+        child = current->firstChild;
+        PCB* prevChild = child;
+        while (child->nextChild != NULL) {
+            child = child->nextChild;
+            if (child->isDead) {
+                prevChild->nextChild = child->nextChild;
+                break;
+            }
+            prevChild = child;
+        }
+    }
+    return returnValue;
 }
 
+/**
+ * The Dispatcher:
+ * builds a new priorityArray each time it is called, based on the processTable.
+ * Uses two helper functions, below.
+ */
 void dispatcher() {
-    // TODO: block interrupts
-    // TODO: look for a process with STATUS == 0
-
+    disableInterrupts();
     // this function builds a new priority array each time it is called
     dispatchHelper_buildArray();
     // search for first runnable process according to priority
     PCB * nextProcess = dispatchHelper_findNextProcess();
-
-    if (nextProcess != current) {
-        // TODO: Context Switch
-        // USLOSS_ContextSwitch(USLOSS_Context *old_context, USLOSS_Context *new_context);
-        // TODO: What about time slicing?
+    if (nextProcess == NULL) {
+        // This should never happen
+        USLOSS_Console("ERROR: dispatcher(): no runnable process found, not evern sentinel().");
+        assert(0);
     }
-
-    // print Process Table info for debugging (why?)
-    dumpProcesses();
-
-    // TODO: "Restore" interrupts
+    if (nextProcess != current) {
+        USLOSS_ContextSwitch(current->context, nextProcess->context);
+        // TODO: What about time slicing? (I'd assume we switch if current process has exceeded its time slice)
+    }
+    restoreInterrupts();
 }
 
 /* 
@@ -289,6 +329,7 @@ void dispatchHelper_buildArray() {
     // NOTE: This runs in O(n^2) and could be updated to run in O(n), but n<50 so whatever
     // clear the priorityArray
     ListNode * priorityArray[8];
+    memset(priorityArray, 0, sizeof(priorityArray));
     // iterate through the Process Table and add each PCB* to priorityArray
     for (int i = 0; i < MAXPROC; i++) {
         if (processTable[i] == NULL) {
@@ -320,25 +361,31 @@ PCB* dispatchHelper_findNextProcess() {
     for (int priority = 1; priority <= 7; priority++) {
         ListNode * head = priorityArray[priority];
         while (head != NULL) {
-            if (head->node->status == 0) {
+            if (head->node->status == 0 
+                    && head->node->isDead == 0) {
                 return head->node;
             }
             head = head->next;
         }
     }
-    return NULL; // TODO: check
+    return NULL;
 }
 
-void quit(int status){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.")
-        USLOSS_Halt(1);
+/*
+ * Called by a process,
+ * Terminates the process and unblocks its parent
+ */
+void quit(int status) {
+    // if parent is blocked because of join(), unblock them
+    current->exitStatus = status;
+    current->isDead = 1;
+    if (current->parent->status == 11) {
+        current->parent->status = 0;
     }
-    // write status out to PCB
-    // if parent is blocked, wake them
-
-    // tell dispatcher that there is no currently running process
     dispatcher();
+    // TODO: unblock anything trying to zap() the current process???
+
+    // NOTE: this function should never return
 }
 
 int zap(int pid){
