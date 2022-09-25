@@ -1,26 +1,30 @@
+#include <stdlib.h>
+#include <string.h>
 #include "phase1.h"
 
-typedef struct PCB{
-    char* name;
+
+typedef struct PCB{  // this needs contexts
+    char *name;
     int pid;
     // 0 for runnable, greater for blocked
     int status;
     int priority;
-    ListNode* firstChild;
-    PCB* parent;
+    struct PCB* firstChild;
+    struct PCB* parent;
     int startTime;
     // might be necessary
     int totalTime;
     // 1== is zapped
     int zapped;
-}PCB;
+    USLOSS_Context context;
+} PCB;
 
 typedef struct ListNode{
     PCB* node;
-    ListNode* next;
+    struct ListNode* next;
 }ListNode;
 
-PCB * processTable[MAXPROC];
+PCB *processTable[MAXPROC];
 int PID=1;
 int processTable_size=0;
 PCB* current;
@@ -29,8 +33,11 @@ PCB* current;
 // The first slot of the array (#0) is not used.
 ListNode * priorityArray[8];
 
-// todo: make functions to enable/disable interrupts
-
+// Function Delarations
+void dispatcher();
+void dispatchHelper_buildArray();
+PCB* dispatchHelper_findNextProcess();
+PCB* getProcess(int); // TODO: unmade
 
 
 /*
@@ -44,21 +51,12 @@ ListNode * priorityArray[8];
  */
 
 void disableInterrupts() {
-    int prevPSR = USLOSS_PsrGet();
+    // int prevPSR = USLOSS_PsrGet();
     // USLOSS_PsrSet(???);
 }
 
 void restoreInterrupts() {
     
-}
-
-
-void phase1_init() {
-    /*This will be called exactly once, when the simulation starts up. Initialize
-your data structures, including setting up the process table entry for the
-starting process, init.
-Although you will create a process table entry for init, you must not run
-it (yet).*/
 }
 
 void init() {
@@ -69,7 +67,12 @@ void sentinel(){
 }
 
 /*
- * 
+ * From the spec:
+ * "This will be called exactly once, when the simulation starts up. Initialize
+ * your data structures, including setting up the process table entry for the
+ * starting process, init.
+ * Although you will create a process table entry for init, you must not run
+ * it (yet)."
  */
 void phase1_init(){
     PCB* init= malloc(sizeof(PCB));
@@ -93,7 +96,8 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
     if (stackSize<USLOSS_MIN_STACK){
         return -2;
     }
-    if (processTable_size== MAXPROC || priority<1 || priority>7|| startFunc==NULL || name==NULL || strlen(name)>MAXNAME){
+    // TODO: I think this priority check should be priority>5 instead of priority>7
+    if (processTable_size== MAXPROC || priority<1 || priority>7 || startFunc==NULL || name==NULL || strlen(name)>MAXNAME){
         return -1;
     }
     PCB* child= malloc(sizeof(PCB));
@@ -110,16 +114,35 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
     processTable[slot]= child;
     mmu_init_proc(child->pid);
     // todo: make function to add a child to a current process
-    add_child(child);
+    // add_child(child);
     // todo: wrapper function
     dispatcher();
+
+    // TODO: this is a temporary return value
+    return 0;
 }
 
 int join(int *status){
-    if (current->firstChild == NULL){
+    if (current->firstChild == NULL) {
         return -2;
     }
     
+    // TEMP
+    return 0;
+    // TEMP
+
+    // search list of children starting at current->firstChild
+    // if all children are blocked:
+        // block current process:
+            // change current->status to blocked (this would automatically be resolved upon termination of a child)
+        // call dispatcher();
+        // search again, find the child
+        // set parameter *status to exit status of the child
+        // return found child's PID value
+    // else
+        // find the dead child
+        // set parameter *status to exit status of the child
+        // return found child's PID value
 }
 
 void dispatcher() {
@@ -132,7 +155,7 @@ void dispatcher() {
 
     if (nextProcess != current) {
         // TODO: Context Switch
-        USLOSS_ContextSwitch(USLOSS_Context *old_context, USLOSS_Context *new_context);
+        // USLOSS_ContextSwitch(USLOSS_Context *old_context, USLOSS_Context *new_context);
         // TODO: What about time slicing?
     }
 
@@ -172,14 +195,13 @@ void dispatchHelper_buildArray() {
         newNode->node = processTable[i];
         newNode->next = NULL;
     }
-    return 0;
 }
 
 /*
  * Uses the Priority Array to determine the next process to call
  * NOTE: The first slot of the array (#0) is not used.
  */
-PCB * dispatchHelper_findNextProcess() {
+PCB* dispatchHelper_findNextProcess() {
     for (int priority = 1; priority <= 7; priority++) {
         ListNode * head = priorityArray[priority];
         while (head != NULL) {
@@ -189,6 +211,7 @@ PCB * dispatchHelper_findNextProcess() {
             head = head->next;
         }
     }
+    return NULL; // TODO: check
 }
 
 void quit(int status){
@@ -200,8 +223,8 @@ void quit(int status){
 }
 
 int zap(int pid){
-    Process* item= getProcess(pid);
-    if (pid==1 || pid== current->pid || item== null){
+    PCB* item= getProcess(pid);
+    if (pid==1 || pid== current->pid || item== NULL){
         USLOSS_Halt(1);
     }
     item->zapped= 1;
@@ -228,23 +251,23 @@ int getpid(void){
  */
 void dumpProcesses(){
    for (int i=0; i<MAXPROC; i++){
-        Process* cur= processTable[i];
+        PCB* cur= processTable[i];
         if (cur != NULL){
-            USLOSS_CONSOLE("Process Name: %s\n", cur->name);
-            USLOSS_CONSOLE("PID %d\n", cur->pid);
+            USLOSS_Console("Process Name: %s\n", cur->name);
+            USLOSS_Console("PID %d\n", cur->pid);
             // is this even possible? probably not lol
-            USLOSS_CONSOLE("Parent PID: %d\n", cur->parent->pid);
-            USLOSS_CONSOLE("Priority: %d\n", cur->priority);
-            USLOSS_CONSOLE("Status: %d\n", cur->status);
+            USLOSS_Console("Parent PID: %d\n", cur->parent->pid);
+            USLOSS_Console("Priority: %d\n", cur->priority);
+            USLOSS_Console("Status: %d\n", cur->status);
             // todo: add number of children
-            USLOSS_CONSOLE("CPU time consumed: %d", cur->totalTime);
+            USLOSS_Console("CPU time consumed: %d", cur->totalTime);
         }
    }
 }
 
 int blockMe(int newStatus){
     if (newStatus<10){
-        USLOSS_CONSOLE("Error: status message incorrect.");
+        USLOSS_Console("Error: status message incorrect.");
         USLOSS_Halt(1);
     }
     current->status= newStatus;
@@ -260,9 +283,9 @@ int blockMe(int newStatus){
  */
 int unblockProc(int pid){
     // todo: make function to get an element based on pid
-    Process* item= getProcess(pid);
+    PCB* item= getProcess(pid);
     // checking status
-    if (item== void || item->status<2|| item->status<=10 ){
+    if (item== NULL || item->status<2|| item->status<=10 ){
         return -2;
     }
     //unblock the process
@@ -278,10 +301,13 @@ int readCurStartTime(){
 
 int currentTime(){
     // todo: what argumenst are needed in USLOSS function?
-    return USLOSS_DeviceInput(USLOSS_CLOCK_DEV, 0, 0);
+    int result = USLOSS_DeviceInput(USLOSS_CLOCK_DEV, 0, 0);
+    return result;
 }
 
 int readTime(){
+    // TODO: this is a placeholder
+    return 0;
 }
 
 void timeSlice(){
