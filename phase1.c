@@ -34,8 +34,6 @@ int PID=1;
 int processTable_size=0;
 PCB* current;
 
-
-// todo: add function pointer
 // Priority Array - what the dispatcher uses.
 // The first slot of the array (#0) is not used.
 ListNode * priorityArray[8];
@@ -108,6 +106,7 @@ void disableInterrupts() {
 
 /**
  * Restores interrupts to previous state
+ * TODO: disable and restore interrupts for every function
 */
 void restoreInterrupts() {
     assertKernelMode();
@@ -136,6 +135,12 @@ void init() {
     }
 }
 
+// Dummies
+void phase2_create_service_processes() {} 
+void phase3_create_service_processes() {}
+void phase4_create_service_processes() {}
+void phase5_create_service_processes() {}
+
 int testcase_main_caller(char* nothing){
     // call other function (provided by testcase?)
     return 0;
@@ -161,13 +166,28 @@ int sentinel(char* nothing){
  * it (yet)."
  */
 void phase1_init(){
-    PCB* init= makeDefaultPCB("init", 6);
-    processTable[1]= init;
-    processTable_size++;
+
 }
+// Dummies
+void phase2_init() {}
+void phase3_init() {}
+void phase4_init() {}
+void phase5_init() {}
 
 
 void startProcesses(){
+    assertKernelMode();
+    PCB* initPCB= makeDefaultPCB("init", 6);
+    // make a context for init
+    // function? init()?
+    // TODO: make a wrapper function??
+    void (*init_ptr)(int) = &init;
+    USLOSS_Context * newContext = malloc(sizeof(USLOSS_Context));
+    USLOSS_ContextInit(newContext, NULL /*dummy stack?*/, USLOSS_MIN_STACK, NULL/*dummy page table???*/, init_ptr);
+    initPCB->context = newContext;
+
+    processTable[1]= init;
+    processTable_size++;
     dispatcher();
 }
 
@@ -181,7 +201,12 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
     if (stackSize<USLOSS_MIN_STACK){
         return -2;
     }
-    if (processTable_size >= MAXPROC || priority<1 || (priority>5 && strcmp(name, "sentinel")!=0) || startFunc==NULL || name==NULL || strlen(name)>MAXNAME){
+    if (processTable_size >= MAXPROC 
+            || priority<1 
+            || (priority>5 && strcmp(name, "sentinel")!=0) 
+            || startFunc==NULL 
+            || name==NULL 
+            || strlen(name)>MAXNAME){
         return -1;
     }
     PCB* child= malloc(sizeof(PCB));
@@ -197,7 +222,6 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
     // child->totalTime = ??? // TODO
     child->zapped = 0;
     child->isDead = 0;
-
 
     // Make a Wrapper Function
     // TODO how?
@@ -230,7 +254,6 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
     // add child to current process (parent)
     fork1Helper_addChild(child);
 
-    // TODO: wrapper function
     dispatcher();
 
     return child->pid;
@@ -342,11 +365,20 @@ void dispatcher() {
     PCB * nextProcess = dispatchHelper_findNextProcess();
     if (nextProcess == NULL) {
         // This should never happen
-        USLOSS_Console("ERROR: dispatcher(): no runnable process found, not evern sentinel().");
-        assert(0);
+        USLOSS_Console("ERROR: dispatcher(): no runnable process found, not even sentinel().");
+        dumpProcesses();
+        dumpPriorityArray();
+        // assert(0);
     }
+    USLOSS_Console("Dispatcher: found %s\n", nextProcess->name);
     if (nextProcess != current) {
-        USLOSS_ContextSwitch(current->context, nextProcess->context);
+        USLOSS_Console("Performing Context Switch...\n");
+        if (current == NULL) {
+            USLOSS_ContextSwitch(NULL, nextProcess->context);    
+        } else {
+            USLOSS_ContextSwitch(current->context, nextProcess->context);
+        }
+        USLOSS_Console("Context switch success.\n");
         // TODO: What about time slicing? (I'd assume we switch if current process has exceeded its time slice)
     }
     restoreInterrupts();
@@ -360,10 +392,11 @@ void dispatcher() {
 void dispatchHelper_buildArray() {
     // NOTE: This runs in O(n^2) and could be updated to run in O(n), but n<50 so whatever
     // clear the priorityArray
-    ListNode * priorityArray[8];
     memset(priorityArray, 0, sizeof(priorityArray));
     // iterate through the Process Table and add each PCB* to priorityArray
-    for (int i = 0; i < MAXPROC; i++) {
+    int count = 0;
+    int i = 0;
+    for (i = 0; i < MAXPROC; i++) {
         if (processTable[i] == NULL) {
             continue;
         }
@@ -382,7 +415,9 @@ void dispatchHelper_buildArray() {
         }
         newNode->node = processTable[i];
         newNode->next = NULL;
+        count++;
     }
+    USLOSS_Console("dispatchBuildArray: iterated %d, added %d\n", i, count); // TODO remove
 }
 
 /*
@@ -401,6 +436,26 @@ PCB* dispatchHelper_findNextProcess() {
         }
     }
     return NULL;
+}
+
+/*
+ * For Debugging:
+ * prints info on the dispatcher's priorityArray
+ */
+void dumpPriorityArray() {
+    USLOSS_Console("~~~~~~~ Priority Array Info ~~~~~~~\n");
+    for (int i = 1; i <= 7; i++) {
+        USLOSS_Console("Priority Slot (i): %d\n", i);
+        ListNode * tempNode = priorityArray[i];
+        while (tempNode != NULL) {
+            USLOSS_Console("Process: %s\n", tempNode->node->name);
+            USLOSS_Console("Priority: %d\n", tempNode->node->priority);
+            USLOSS_Console("PID: %d\n", tempNode->node->pid);
+            USLOSS_Console("\n");
+            tempNode = tempNode->next;
+        }
+    }
+    USLOSS_Console("Done printing priorityArray.\n");
 }
 
 /*
@@ -456,16 +511,23 @@ void dumpProcesses(){
    for (int i=0; i<MAXPROC; i++){
         PCB* cur= processTable[i];
         if (cur != NULL){
+            USLOSS_Console("Slot in processTable: %d\n", i);
             USLOSS_Console("Process Name: %s\n", cur->name);
             USLOSS_Console("PID %d\n", cur->pid);
             // is this even possible? probably not lol
-            USLOSS_Console("Parent PID: %d\n", cur->parent->pid);
+            if (cur->parent != NULL)
+                USLOSS_Console("Parent name: %d\n", cur->parent->name);
+            else 
+                USLOSS_Console("No parent.\n");
             USLOSS_Console("Priority: %d\n", cur->priority);
             USLOSS_Console("Status: %d\n", cur->status);
-            // todo: add number of children
-            USLOSS_Console("CPU time consumed: %d", cur->totalTime);
+            USLOSS_Console("IsDead: %d\n", cur->isDead);
+            USLOSS_Console("firstChild: %s\n", cur->firstChild);
+            // todo: add number of children?
+            USLOSS_Console("CPU time consumed: %d\n", cur->totalTime);
         }
    }
+   USLOSS_Console("Done printing processTable.\n");
 }
 
 int blockMe(int newStatus){
