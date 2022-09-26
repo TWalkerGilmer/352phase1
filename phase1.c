@@ -3,7 +3,7 @@
 #include <assert.h>
 #include "phase1.h"
 
-typedef struct PCB{  // this needs contexts
+typedef struct PCB{
     char *name;
     int pid;
     // 0 for runnable, >10 for blocked
@@ -49,17 +49,7 @@ PCB* getProcess(int);
 int sentinel(char* nothing);
 
 // int USLOSS_IntVec[] = malloc(sizeof(void*) * USLOSS_NUM_INTS);
-USLOSS_IntVec[USLOSS_CLOCK_INT] = clockHandler;
-
-/*
- * According to the spec, every function in Phase1 needs to disable interrupts at start,
- * and "Restore" interrupts before returning,
- * Additionally, Phase1 is only supposed to run in kernel mode, so each function
- * has to check if kernel mode is enabled, otherwise return an error immediately.
- * These checks can both be done by accessing the PSR, with: 
- * unsigned int USLOSS_PsrGet();   and 
- * void USLOSS_PsrSet(unsigned int);
- */
+// USLOSS_IntVec[USLOSS_CLOCK_INT] = clockHandler; // TODO
 
 /*
  * Makes a new PCB with default values
@@ -91,45 +81,44 @@ PCB* makeDefaultPCB(char* name, int p){
 */
  int checkKernelMode(){
     // mask psr to get kernel mode status value
-    if ((USLOSS_PSR_CURRENT_MODE & USLOSS_PsrGet())== 0){
+    if ((USLOSS_PSR_CURRENT_MODE & USLOSS_PsrGet() )== 0){
         return 1;
     }
-    return 0;
+    return 0; 
+ }
+
+/*
+ * If we're not in kernel mode, prints an error message and halts usloss.
+ */
+ void assertKernelMode() {
+    if ((USLOSS_PSR_CURRENT_MODE & USLOSS_PsrGet() )== 0){
+        USLOSS_Console("Error: Not in kernel mode.");
+        USLOSS_Halt(1);
+    }
  }
 
 /**
  * Disables interrupts.
 */
 void disableInterrupts() {
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
-    else{
-        // mask to set the interrupts to 0 (disabled)
-        USLOSS_PsrSet(USLOSS_PsrGet() & ~USLOSS_PSR_CURRENT_INT);
-    }
-
+    assertKernelMode();
+    // mask to set the interrupts to 0 (disabled)
+    USLOSS_PsrSet(USLOSS_PsrGet() & ~USLOSS_PSR_CURRENT_INT);
 }
 
 /**
  * Restores interrupts to previous state
 */
 void restoreInterrupts() {
-    if (checkKernelMode()== 1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
-    else{
-        // set the interrupts to its previous state
-        // gets the previous interrupt value and right shifts
-        int new_mask= (USLOSS_PsrGet() & USLOSS_PSR_PREV_INT) >> 2;
-        USLOSS_PsrSet(USLOSS_PsrGet() | new_mask);
-    }
+    assertKernelMode();
+    // set the interrupts to its previous state
+    // gets the previous interrupt value and right shifts
+    int new_mask= (USLOSS_PsrGet() & USLOSS_PSR_PREV_INT) >> 2;
+    USLOSS_PsrSet(USLOSS_PsrGet() | new_mask);
 }
 
 void init() {
-    //boostrapping
+    //bootstrapping
     phase2_create_service_processes();
     phase3_create_service_processes();
     phase4_create_service_processes();
@@ -147,16 +136,13 @@ void init() {
     }
 }
 
-int testcase_main(char* nothing){
+int testcase_main_caller(char* nothing){
     // call other function (provided by testcase?)
     return 0;
 }
 
 int sentinel(char* nothing){
-    if (checkKernelMode()== 1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     while(1){
         if (phase2_check_io() == 0){
             USLOSS_Console("Error: Deadlock detected");
@@ -191,37 +177,85 @@ PCB * getProcess(int num) {
 }
 
 int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int priority){
+    assertKernelMode();
     if (stackSize<USLOSS_MIN_STACK){
         return -2;
     }
-
-    if (processTable_size== MAXPROC || priority<1 || (priority>5 && strcmp(name, "sentinel")!=0) || startFunc==NULL || name==NULL || strlen(name)>MAXNAME){
+    if (processTable_size >= MAXPROC || priority<1 || (priority>5 && strcmp(name, "sentinel")!=0) || startFunc==NULL || name==NULL || strlen(name)>MAXNAME){
         return -1;
     }
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
     PCB* child= malloc(sizeof(PCB));
+    child->name= name;
     child->pid= PID;
     PID++;
-    child->name= name;
+    child-> status=0; // runnable
     child->priority= priority;
-    child-> zapped=0;
-    child-> status=0;
-    child-> parent= current;
-    // todo: add pointer to PCB
-    int slot= PID%MAXPROC;
-    // todo: need to check if slot is in use
-    processTable[slot]= child;
-    mmu_init_proc(child->pid);
-    // todo: make function to add a child to a current process
-    // add_child(child);
-    // todo: wrapper function
+    child->parent = current;
+    child->firstChild = NULL;
+    child->nextChild  = NULL;
+    // child->startTime = ??? // TODO
+    // child->totalTime = ??? // TODO
+    child->zapped = 0;
+    child->isDead = 0;
+
+
+    // Make a Wrapper Function
+    // TODO how?
+
+    // Initiate the Context!
+    // TODO: make a Wrapper function
+    USLOSS_Context * newContext = malloc(sizeof(USLOSS_Context));
+    void * newStack = malloc(sizeof(stackSize));
+    // TODO use the wrapper function
+    USLOSS_ContextInit(newContext, newStack, stackSize, NULL/*dummy page table???*/, startFunc(arg));
+
+    // add child to PCB
+    int slotIndex = child->pid % MAXPROC;
+    int startingIndex = slotIndex;
+    while (processTable[slotIndex] != NULL) {
+        slotIndex++;
+        if (slotIndex >= MAXPROC) {
+            slotIndex = slotIndex - MAXPROC;
+        }
+        if (slotIndex = startingIndex) {
+            // processTable is full, failure to add
+            USLOSS_Console("Process Table is full, cannot add process.");
+            return -1;
+        }
+    }
+    processTable[slotIndex] = child;
+
+    mmu_init_proc(child->pid); // dummy function, obligatory
+
+    // add child to current process (parent)
+    fork1Helper_addChild(child);
+
+    // TODO: wrapper function
     dispatcher();
 
-    // TODO: this is a temporary return value
-    return 0;
+    return child->pid;
+}
+
+/*
+ * Adds a child to the list of children for the current process.
+ */
+void fork1Helper_addChild(PCB * child) {
+    if (current->firstChild == NULL) {
+        current->firstChild = child;
+    } else {
+        PCB * tempChild = current->firstChild;
+        while (tempChild->nextChild != NULL) {
+            tempChild = tempChild->nextChild;
+        }
+        tempChild->nextChild = child;
+    }
+}
+
+/*
+ * Wrapper Function
+ */ 
+void fork1Helper_wrapperFunction (void * (startFunc)(char* arg)) {
+    // TODO
 }
 
 /*
@@ -231,13 +265,9 @@ int fork1(char *name, int (*startFunc)(char*), char *arg, int stackSize, int pri
  * Returns the dead child's PID.
  */
 int join(int *status){
+    assertKernelMode();
     if (current->firstChild == NULL) {
         return -2;
-    }
-
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
     }
 
     // search list of children starting at current->firstChild
@@ -276,6 +306,7 @@ int join(int *status){
     for (int i = 0; i < MAXPROC; i++) {
         if (processTable[i] == child) {
             processTable[i] = NULL;
+            processTable_size--;
             break;
         }
     }
@@ -303,6 +334,7 @@ int join(int *status){
  * Uses two helper functions, below.
  */
 void dispatcher() {
+    assertKernelMode();
     disableInterrupts();
     // this function builds a new priority array each time it is called
     dispatchHelper_buildArray();
@@ -376,6 +408,7 @@ PCB* dispatchHelper_findNextProcess() {
  * Terminates the process and unblocks its parent
  */
 void quit(int status) {
+    assertKernelMode();
     // if parent is blocked because of join(), unblock them
     current->exitStatus = status;
     current->isDead = 1;
@@ -389,10 +422,7 @@ void quit(int status) {
 }
 
 int zap(int pid){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     PCB* item= getProcess(pid);
     if (pid==1 || pid== current->pid || item== NULL){
         USLOSS_Halt(1);
@@ -409,18 +439,12 @@ int zap(int pid){
 }
 
 int isZapped(){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     return current->zapped;
 }
 
 int getpid(void){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     return current->pid;
 }
 
@@ -428,10 +452,7 @@ int getpid(void){
  * Prints out info on the Process Table, for debugging
  */
 void dumpProcesses(){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
    for (int i=0; i<MAXPROC; i++){
         PCB* cur= processTable[i];
         if (cur != NULL){
@@ -448,10 +469,7 @@ void dumpProcesses(){
 }
 
 int blockMe(int newStatus){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     if (newStatus<10){
         USLOSS_Console("Error: status message incorrect.");
         USLOSS_Halt(1);
@@ -468,10 +486,7 @@ int blockMe(int newStatus){
  * Unblocks a process
  */
 int unblockProc(int pid){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     // todo: make function to get an element based on pid
     PCB* item= getProcess(pid);
     // checking status
@@ -489,10 +504,7 @@ int unblockProc(int pid){
  * Returns the time at which current process began its current time slice.
 */
 int readCurStartTime(){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     return current->startTime;
 }
 
@@ -500,10 +512,7 @@ int readCurStartTime(){
  * Returns current wall-clock time.
 */
 int currentTime(){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     // todo: what argumenst are needed in USLOSS function?
     // int result = USLOSS_DeviceInput(USLOSS_CLOCK_DEV, );
     // return result;
@@ -514,10 +523,7 @@ int currentTime(){
  * Returns total CPU time of the process since it was created.
  */
 int readtime(){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     return current->totalTime+currentTime();
 }
 
@@ -529,10 +535,7 @@ static void clockHandler(int dev, void *arg){
 * Returns if current process exceeds its time slice. Call dispatcher if true.
 */
 void timeSlice(){
-    if (checkKernelMode()==1){
-        USLOSS_Console("Error: Not in kernel mode.");
-        USLOSS_Halt(1);
-    }
+    assertKernelMode();
     int t= currentTime();
     int st= readCurStartTime();
     if (t- st >=80){
